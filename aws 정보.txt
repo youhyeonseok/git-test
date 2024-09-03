@@ -1,0 +1,3 @@
+cnc_database
+root
+12345678

@@ -304,7 +304,7 @@ class RealTimeDataReader(DataBaseHandler):
 #         end = time.time()
 #         print(f"Result : {123}, Total time taken: {end - start:.2f} seconds")  # 총 소요 시간 출력
 
-db_handler = DataBaseHandler('127.0.0.1', 'root', '1234', 'cnc_data_db', 'utf8mb4', 'utf8mb4_general_ci')
+db_handler = DataBaseHandler('cnc-database.cl0igskqmp5x.us-east-1.rds.amazonaws.com', 'root', '12345678', 'cnc_database', 'utf8mb4', 'utf8mb4_general_ci')
 
 # 제목을 추가합니다.
 st.title('Streamlit 선택창 예제')
