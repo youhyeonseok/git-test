@@ -1,0 +1,273 @@
+import mysql.connector
+import sys
+import pandas as pd
+from mysql.connector import Error
+from log import LoggerHandler
+
+class DataBaseHandler:
+
+    def __init__(self, host, user, password, database_name, charset="utf8mb4", collation="utf8mb4_general_ci"):
+        self.host = host
+        self.user = user
+        self.password = password
+        self.database_name = database_name
+        self.charset = charset
+        self.collation = collation
+
+        self.logger_handler = LoggerHandler()
+        self.logger = self.logger_handler.get_logger()
+        self.conn = None
+        self.connect_database()
+
+    @staticmethod
+    def dtype_to_sql(dtype):
+        dtype_str = str(dtype)  # dtype을 문자열로 변환
+        if "float" in dtype_str:
+            return "FLOAT"
+        elif "int" in dtype_str:
+            return "INT"
+        elif "object" in dtype_str:  # 문자열 타입은 object로 표현됩니다.
+            return "VARCHAR(255)"  # 길이를 지정할 수 있습니다.
+        elif "datetime" in dtype_str:
+            return "DATETIME"
+        else:
+            return "TEXT"  # 기본값으로 TEXT를 사용
+
+    def exception_handler_decorator(self, func):
+        def wrapper(*args, **kwargs):
+            try:
+                return func(*args, **kwargs)
+            
+            except mysql.connector.errors.InterfaceError as ie:
+                self.logger.error(f"MySQL 서버에 연결할 수 없습니다: {ie}")
+                print(f"MySQL 서버에 연결할 수 없습니다: {ie}")
+                self.conn.close()
+                sys.exit()
+
+            except mysql.connector.errors.ProgrammingError as pe:
+                self.logger.error(f"SQL 쿼리에서 프로그래밍 오류가 발생했습니다: {pe}")
+                print(f"SQL 쿼리에서 프로그래밍 오류가 발생했습니다: {pe}")
+                self.conn.close()
+                sys.exit()
+
+            except mysql.connector.errors.IntegrityError as ie:
+                self.logger.error(f"데이터 무결성 문제가 발생했습니다: {ie}")
+                print(f"데이터 무결성 문제가 발생했습니다: {ie}")
+                self.conn.close()
+                sys.exit()
+
+            except mysql.connector.errors.DataError as de:
+                self.logger.error(f"데이터 관련 오류가 발생했습니다: {de}")
+                print(f"데이터 관련 오류가 발생했습니다: {de}")
+                self.conn.close()
+                sys.exit()
+
+            except mysql.connector.errors.OperationalError as oe:
+                self.logger.error(f"운영 중 문제가 발생했습니다: {oe}")
+                print(f"운영 중 문제가 발생했습니다: {oe}")
+                self.conn.close()
+                sys.exit()
+
+            except RuntimeError as re:
+                self.logger.error(f"데이터 베이스 연결 파라미터 오류가 발생했습니다: {re}")
+                print(f"데이터 베이스 연결 파라미터 오류가 발생했습니다: {re}")
+                self.conn.close()
+                sys.exit()
+
+            except Error as e:
+                self.logger.error(f"예기치 않은 오류가 발생했습니다: {e}")
+                print(f"예기치 않은 오류가 발생했습니다: {e}")
+                self.conn.close()
+                sys.exit()
+
+        return wrapper
+
+    def connect_database(self):
+        decorated_connect = self.exception_handler_decorator(self._connect_database)
+        decorated_connect()
+
+    def _connect_database(self):
+        self.conn = mysql.connector.connect(
+            host=self.host,
+            user=self.user,
+            password=self.password,
+            database=self.database_name,
+            charset=self.charset,
+            collation=self.collation
+        )
+
+        if self.conn.is_connected():
+            self.logger.info("데이터베이스에 성공적으로 연결되었습니다.")
+            print("데이터베이스에 성공적으로 연결되었습니다.")
+
+    def select_columns_list(self, table_name):
+        decorated_select_columns_list = self.exception_handler_decorator(self._select_columns_list)
+        return decorated_select_columns_list(table_name)
+
+    def _select_columns_list(self, table_name):
+        cursor = self.conn.cursor(buffered=True)
+        cursor.execute(f"SELECT * FROM {table_name} LIMIT 1")
+        cursor.close()
+        field_names = [i[0] for i in cursor.description]
+        return field_names
+
+    def view_table_list(self):
+        decorated_view_table = self.exception_handler_decorator(self._view_table_list)
+        return decorated_view_table()
+
+    def _view_table_list(self):
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SHOW TABLES;"
+        )
+        tables_name = cursor.fetchall()
+        cursor.close()
+        self.logger.info(f"데이터 베이스 테이블 조회 성공 :{tables_name}")
+        print(f"데이터 베이스 테이블 조회 성공 :{tables_name}")
+
+        return tables_name
+
+    def create_table(self, table_name, data):
+        decorated_create_table = self.exception_handler_decorator(self._create_table)
+        decorated_create_table(table_name, data)
+
+    def _create_table(self, table_name, data):
+        cursor = self.conn.cursor()
+        sql = f"CREATE TABLE {table_name} ("
+
+        for dtype, column in zip(data.dtypes.tolist(), data.columns):
+            sql += f"{column} {self.dtype_to_sql(dtype)},"
+
+        sql = sql.rstrip(',')  # 마지막 쉼표 제거
+        sql += ");"
+        cursor.execute(sql)
+        cursor.close()
+        self.logger.info(f"데이터 베이스 테이블 생성 성공 :{table_name}")
+        print(f"데이터 베이스 테이블 생성 성공 :{table_name}")
+
+    def read_table(self,table_name, columns = [None]):
+        decorated_read_table = self.exception_handler_decorator(self._read_table)
+        return decorated_read_table(table_name, columns)
+
+    def _read_table(self,table_name, columns = [None]):
+        cursor = self.conn.cursor(buffered=True)
+
+        if columns[0] == None:
+            sql = f"SELECT * FROM {table_name}"
+            cursor.execute(sql)
+            result = cursor.fetchall()
+            cursor.close()
+
+            self.logger.info(f"데이터 베이스 테이블 데이터 불러오기 성공 :{table_name}")
+            print(f"데이터 베이스 테이블 데이터 불러오기 성공 :{table_name}")
+            return pd.DataFrame(result, columns=self.select_columns_list(table_name))
+        
+        else:
+            temp = ""
+            for col in columns:
+                temp += f"{col},"
+            sql = f"SELECT {temp[:-1]} FROM {table_name}" # temp에서 마지막 , 제거를 위해 -1로 슬라이싱함
+            cursor.execute(sql)
+            result = cursor.fetchall()
+            cursor.close()
+
+            self.logger.info(f"데이터 베이스 테이블 데이터 불러오기 성공 :{table_name}")
+            print(f"데이터 베이스 테이블 데이터 불러오기 성공 :{table_name}")
+            return pd.DataFrame(result, columns)
+            
+    def write_table(self, table_name, data):
+        decorated_write_table = self.exception_handler_decorator(self._write_table)
+        decorated_write_table(table_name, data)
+
+    def _write_table(self, table_name, data):
+        self.create_table(table_name, data)
+
+        cursor = self.conn.cursor()
+        columns = ", ".join(data.columns)
+        placeholders = ", ".join(["%s"] * len(data.columns))
+        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        values = [tuple(row) for row in data.values]
+        cursor.executemany(insert_query, values)
+
+        # commit 호출시 모든 변경사항이 확정됨 (insert, update, delete)
+        self.conn.commit()
+        cursor.close()
+        self.logger.info(f"{table_name} 테이블 데이터 삽입 성공")
+        print(f"{table_name} 테이블 데이터 삽입 성공")
+
+    def update_table(self, table_name, data):
+        decorated_update_table = self.exception_handler_decorator(self._update_table)
+        decorated_update_table(table_name, data)
+    
+    def _update_table(self, table_name, data):
+        cursor = self.conn.cursor()
+        columns = ", ".join(data.columns)
+        placeholders = ", ".join(["%s"] * len(data.columns))
+        insert_query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+        values = [tuple(row) for row in data.values]
+        cursor.executemany(insert_query, values)
+
+        # commit 호출시 모든 변경사항이 확정됨 (insert, update, delete)
+        self.conn.commit()
+        cursor.close()
+        self.logger.info(f"{table_name} 테이블 데이터 업데이트 성공")
+        print(f"{table_name} 테이블 데이터 업데이트 성공")
+
+    def delete_table(self, table_name):
+        decorated_delete_table = self.exception_handler_decorator(self._delete_table)
+        decorated_delete_table(table_name)
+
+    def _delete_table(self, table_name):
+        cursor = self.conn.cursor()
+        sql = f"DROP TABLE {table_name}"
+        cursor.execute(sql)
+        cursor.close()
+        self.logger.info(f"{table_name} 테이블 삭제 성공")
+        print(f"{table_name} 테이블 삭제 성공")
+
+class RealTimeDataReader(DataBaseHandler):
+
+    def __init__(self, host, user, password, database_name, charset="utf8mb4", collation="utf8mb4_general_ci"):
+        super().__init__(host, user, password, database_name, charset, collation)
+
+    def read_last_row(self,table_name):
+        decorated_read_last_row = self.exception_handler_decorator(self._read_last_row)
+        return decorated_read_last_row(table_name)
+
+    def _read_last_row(self, table_name):
+        cursor = self.conn.cursor()
+        sql = f"SELECT * FROM {table_name};"
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        cursor.close()
+
+        # self.logger.info(f"{table_name} 테이블 데이터 불러오기 성공")
+        # print(f"{table_name} 테이블 데이터 불러오기 성공")
+
+        return result[-1]
+
+# # 실제 사용 시
+# if __name__ == "__main__":
+#     db_handler = DataBaseHandler('127.0.0.1', 'root', '1234', 'cnc_data_db', 'utf8mb4', 'utf8mb4_general_ci')
+#     real_time_handler = RealTimeDataReader('127.0.0.1', 'root', '1234', 'cnc_data_db', 'utf8mb4', 'utf8mb4_general_ci')
+#     # print(real_time_handler.read_last_row("cnc_data"))
+#     # import pandas as pd
+#     # data = pd.read_csv("test_data/x_train_current_only.csv",index_col = 0)
+#     # db_handler.create_table("test3", data)
+#     # db_handler.write_table("test5",data)
+#     # db_handler.update_table("test7",data)
+#     # for i in range(2, 6):
+#     #     db_handler.delete_table(f"test{i}")
+#     # columns = ["CNC_X_Position", "CNC_Z_Current"]
+#     # data = db_handler.read_table("cnc_data", columns=columns)
+#     # columns = db_handler.select_columns_list("cnc_data")
+#     # print(pd.DataFrame(data,columns=columns))
+
+#     import time
+#     while True:
+#         start = time.time()
+#         real_time_handler.connect_database()
+#         # result = real_time_handler.read_last_row("test3")
+#         real_time_handler.conn.close()
+#         end = time.time()
+#         print(f"Result : {123}, Total time taken: {end - start:.2f} seconds")  # 총 소요 시간 출력
