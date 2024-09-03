@@ -6,6 +6,7 @@ from mysql.connector import Error
 import logging
 import os
 from datetime import datetime
+import matplotlib.pyplot as plt
 
 class LoggerHandler:
     def __init__(self, log_dir='log_data'):
@@ -253,6 +254,7 @@ class DataBaseHandler:
         cursor = self.conn.cursor()
         sql = f"DROP TABLE {table_name}"
         cursor.execute(sql)
+        self.conn.commit()
         cursor.close()
         self.logger.info(f"{table_name} 테이블 삭제 성공")
         print(f"{table_name} 테이블 삭제 성공")
@@ -304,16 +306,96 @@ class RealTimeDataReader(DataBaseHandler):
 #         end = time.time()
 #         print(f"Result : {123}, Total time taken: {end - start:.2f} seconds")  # 총 소요 시간 출력
 
-db_handler = DataBaseHandler('cnc-database.cl0igskqmp5x.us-east-1.rds.amazonaws.com', 'root', '12345678', 'cnc_database', 'utf8mb4', 'utf8mb4_general_ci')
+def session_state_ck():
+    for key, _ in st.session_state.items():
+        if key == "initCk":
+            return True
+    return False
 
-# 제목을 추가합니다.
-st.title('Streamlit 선택창 예제')
+def Initialize():
+    st.session_state["initCk"] = True
+    st.session_state["handler"] = False
+    st.session_state["db_handler"] = None
+    st.session_state["table_list"] = []
+    st.session_state["table_list_triger"] = False
 
-# 선택할 옵션 목록을 정의합니다.
-options = db_handler.view_table_list()
-options = [item[0] for item in options]
+if __name__ == "__main__":
 
-# 선택창을 만듭니다.
-choice = st.selectbox('테이블을 선택:', options)
-dataframe = db_handler.read_table(choice)
-st.write(dataframe)
+    if not session_state_ck():
+        Initialize()
+
+    def get_db_handler():
+        return DataBaseHandler('cnc-database.cl0igskqmp5x.us-east-1.rds.amazonaws.com', 'root', '12345678', 'cnc_database', 'utf8mb4', 'utf8mb4_general_ci')
+    def get_table_list():
+        st.session_state["table_list"] = st.session_state["db_handler"].view_table_list()
+
+    if st.session_state["handler"] == False:
+        db_handler = get_db_handler()
+        st.session_state["db_handler"] = db_handler
+        st.session_state["handler"] = True
+
+    if st.session_state["table_list_triger"] == False:
+        st.session_state["table_list_triger"] = True
+        get_table_list()
+
+    options = st.session_state["table_list"]
+    options = [item[0] for item in options]
+
+    # 제목과 서브 헤더
+    st.title('Smec CNC Cloud')
+    st.subheader('데이터 베이스 데이터 보기')
+
+    if st.button('테이블 새로고침'):
+        get_table_list()
+
+    choice = st.selectbox('테이블을 선택:', options,key="read")
+    if choice:
+        dataframe = st.session_state["db_handler"].read_table(choice)
+        st.write(dataframe)
+
+    # 사용자가 선택할 수 있는 데이터 프레임의 열 나열
+    option = st.selectbox(
+        '시각화할 데이터 선택',
+        dataframe.columns)
+
+    # 선택된 열을 기반으로 간단한 플롯 생성
+    fig, ax = plt.subplots()
+    ax.plot(dataframe[option], label=f'Column {option}')
+    ax.set_title(f'Plot of Column {option}')
+    ax.set_xlabel('Index')
+    ax.set_ylabel('Value')
+    ax.legend()
+
+    # Streamlit을 사용하여 플롯 표시
+    st.pyplot(fig)
+
+
+    st.markdown("""
+        <hr style='border: 2px solid #000000;'>
+        """, unsafe_allow_html=True)
+    st.subheader('데이터 베이스에 데이터 추가')
+
+    # CSV 파일 업로드
+    uploaded_file = st.file_uploader("CSV 파일을 선택해주세요", type=["csv"])
+    if uploaded_file:
+        data = pd.read_csv(uploaded_file, index_col=0)
+        st.session_state['data'] = data  # 업로드된 데이터를 세션 상태에 저장
+        st.write(data)  # 데이터를 화면에 표시
+
+    # 새 테이블 명 입력과 저장 버튼
+    new_table_name = st.text_input("새로운 테이블 명을 입력해주세요.")
+    if st.button('데이터 베이스에 저장'):
+        if new_table_name and 'data' in st.session_state and st.session_state['data'] is not None:
+            st.session_state["db_handler"].write_table(new_table_name, st.session_state['data'])
+            st.success('데이터가 성공적으로 저장되었습니다.')
+        else:
+            st.error('데이터를 저장할 수 없습니다. 모든 필드를 채워주세요.')
+
+    st.markdown("""
+        <hr style='border: 2px solid #000000;'>
+        """, unsafe_allow_html=True)
+    st.subheader('데이터 베이스에 데이터 삭제')
+
+    choice2 = st.selectbox('테이블을 선택:', options,key="delete")
+    if st.button('테이블 삭제'):
+        st.session_state["db_handler"].delete_table(choice2)
